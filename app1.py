@@ -125,6 +125,114 @@ def register():
                 text("INSERT INTO users (username, hash) VALUES (:username, :hash)"),
                 [{"username": request.form.get("username"), "hash": generate_password_hash(request.form.get("password"))}],
                 )
+                conn.commit()
             return render_template("login.html")
     else:
         return render_template("register.html")
+
+
+@app.route("/creams", methods=["GET", "POST"])
+@login_required
+def creams():
+    """Add cremes"""
+    if request.method == "POST":
+        # getting the information
+        cream = request.form.get("name")
+        # checking if a name was added
+        if len(cream) <= 0:
+            return apology("Must provide name of the cream")
+        
+        # checking if user already used this name for a creme
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT * FROM creams WHERE cream = :cream AND user_id = :user_id "), {"cream": cream, "user_id": session["user_id"]})
+        rows = rows.all()
+        if (len(rows) != 0):
+            return apology("You have already a cream with this name \n Please choose another")
+
+        # if everything is fine the data can be added to the database
+        else:
+            with engine.begin() as conn:
+                conn.execute(
+                text("INSERT INTO creams (cream, official_name, brand, user_id) VALUES (:cream, :official_name, :brand, :user_id)"),
+                [{"cream": cream, "official_name": request.form.get("official_name"), "brand": request.form.get("brand"), "user_id": session["user_id"]}],
+                )
+                conn.commit()
+
+            # show same page with new entries again
+            with engine.connect() as conn:
+                rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
+            rows = rows.all()
+            return render_template("cremes.html", cremes=rows)
+        
+    else:
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
+        rows = rows.all()
+        return render_template("cremes.html", creams=rows)
+    
+
+@app.route("/areas", methods=["GET", "POST"])
+@login_required
+def areas():
+    # Getting data from databases that is needed for both ways
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT cream FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
+        scheduall = conn.execute(text("SELECT * FROM scheduall"))
+    creams = rows.all()
+    schedualls = scheduall.all()
+    if request.method == "POST":
+        # Ensure user typed in an area 
+        area = request.form.get("area")
+        if len(area) <= 0:
+            return apology("Must provide name of the skin area")
+        
+        # Ensure user has not changed HTML for creams
+        cream = request.form.get("cream")
+        creams_list = [item for tup in creams for item in tup]
+        if not cream in creams_list:
+            return apology("Cream need to be part of your creams")
+        
+        # Ensure user has not changed HTML for day
+        day = request.form.get("day")
+        try:
+            day = int(day)
+            if day < 1 or day > 7:
+                return apology("Please don't change the HTML")
+        except:
+            return apology("Please don't change the HTML")
+        
+        # Ensure user has not changed HTML for creams
+        scheduall = request.form.get("scheduall")
+        try:
+            scheduall = int(scheduall)
+            if scheduall < 0 or scheduall > len(schedualls) - 1:
+                return apology("Please don't change the HTML")
+            elif scheduall < 3:
+                day = None
+        except:
+            return apology("Please don't change the HTML")
+
+        # Ensure user did not input the same area with the same cream twice
+        with engine.connect() as conn:
+            test = conn.execute(text("SELECT * FROM area WHERE user_id = :user_id AND area = :area AND cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id)"), {"user_id": session["user_id"], "area": area, "cream": cream}) 
+            test = test.all()
+        if len(test) > 0:
+            return apology("Entry already exists")
+        # if everything is fine it can be added to the database
+        with engine.begin() as conn:
+                conn.execute(
+                text("INSERT INTO area (area, cream_id, user_id, scheduall_id, starting_day) VALUES (:area, (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id), :user_id, :scheduall_id, :starting_day)"),
+                [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day}],
+                )
+                conn.commit()
+        
+        return render_template("areas.html", creams=creams, scheduall=schedualls)
+        
+
+
+    else:
+        # Putting in the cream names into the html
+        return render_template("areas.html", creams=creams, scheduall=schedualls)
+
+    
+

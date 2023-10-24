@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Creams
+{% endblock %}
+
+{% block main %}
+    <form action="/creams" method="post">
+        <div class="mb-3">
+            Enter the name of the cream (A name how you could recognize the creme)   
+            <input autocomplete="off" autofocus class="form-control mx-auto w-auto" id="name" name="name" placeholder="name (required)" type="text">
+        </div>
+        <div class="mb-3">
+            Enter the official name of the cream
+            <input autocomplete="off" class="form-control mx-auto w-auto" id="official name" name="official_name" placeholder="official name" type="text">
+        </div>
+        <div class="mb-3">
+            Enter the brand of the cream
+            <input autocomplete="off" class="form-control mx-auto w-auto" id="brand" name="brand" placeholder="brand" type="text">
+        </div>
+        <button class="btn btn-primary" type="submit">Submit</button>
+    </form>
+    <br>
+
+
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th scope="col">name</th>
+                <th scope="col">official name</th>
+                <th scope="col">brand</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in cremes %}
+                <tr>
+                    <td>{{ t[0] }}</td>
+                    <td>{{ t[1] }}</td>
+                    <td>{{ t[2] }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

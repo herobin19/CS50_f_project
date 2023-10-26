@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Reminder
+{% endblock %}
+
+{% block main %}
+    <h1>Reminder</h1>
+    <form action="/" method="post">
+        {% for cream, areas in reminder.items() %}
+            <h2>Cream: {{ cream }}</h2>
+            <p>Skin areas:</p>
+            {% for area in areas %}
+            <input type="checkbox" id="{{ cream }}{{ area }}" name="{{ cream }}{{ area }}" value="1">
+            <label for="area">{{ area }}</label><br>
+            {% endfor %}
+        {% endfor %}
+        <input type="submit" value="Submit">
+    </form>
+{% endblock %}

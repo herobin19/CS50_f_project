@@ -18,7 +18,9 @@ CREATE TABLE area(
     cream_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     scheduall_id INTEGER NOT NULL,
-    starting_day INTEGER
+    starting_day INTEGER,
+    checker INTEGER NOT NULL,
+    checktime TEXT
 );
 
 CREATE TABLE scheduall(

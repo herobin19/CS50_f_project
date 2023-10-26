@@ -29,11 +29,6 @@ def after_request(response):
     response.headers["Pragma"] = "no-cache"
     return response
 
-@app.route("/")
-@login_required
-def hello_world():
-    return apology("You are in")
-
 
 #Adapted from finance
 @app.route("/login", methods=["GET", "POST"])
@@ -134,7 +129,7 @@ def register():
 @app.route("/creams", methods=["GET", "POST"])
 @login_required
 def creams():
-    """Add cremes"""
+    """Add creams"""
     if request.method == "POST":
         # getting the information
         cream = request.form.get("name")
@@ -162,24 +157,33 @@ def creams():
             with engine.connect() as conn:
                 rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
             rows = rows.all()
-            return render_template("cremes.html", cremes=rows)
+            return render_template("creams.html", creams=rows)
         
     else:
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
         rows = rows.all()
-        return render_template("cremes.html", creams=rows)
+        return render_template("creams.html", creams=rows)
     
 
 @app.route("/areas", methods=["GET", "POST"])
 @login_required
 def areas():
+    """Adding the areas where to put the creams"""
     # Getting data from databases that is needed for both ways
     with engine.connect() as conn:
         rows = conn.execute(text("SELECT cream FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
         scheduall = conn.execute(text("SELECT * FROM scheduall"))
     creams = rows.all()
     schedualls = scheduall.all()
+    def return_areas():
+        """Getting Information of the areas out of the database"""
+        with engine.connect() as conn:
+            area_info = conn.execute(text("SELECT area, cream, scheduall, starting_day FROM area JOIN creams ON area.cream_id = creams.id JOIN scheduall ON area.scheduall_id = scheduall.id WHERE area.user_id = :user_id"), {"user_id": session["user_id"]})
+        area_info = area_info.all()
+        return render_template("areas.html", areas=area_info, creams=creams, scheduall=schedualls)
+
+
     if request.method == "POST":
         # Ensure user typed in an area 
         area = request.form.get("area")
@@ -212,27 +216,141 @@ def areas():
         except:
             return apology("Please don't change the HTML")
 
-        # Ensure user did not input the same area with the same cream twice
+        # If user puts same area with the same cream in twice it should not be added. but the scheduall will be updated
         with engine.connect() as conn:
-            test = conn.execute(text("SELECT * FROM area WHERE user_id = :user_id AND area = :area AND cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id)"), {"user_id": session["user_id"], "area": area, "cream": cream}) 
-            test = test.all()
-        if len(test) > 0:
-            return apology("Entry already exists")
-        # if everything is fine it can be added to the database
-        with engine.begin() as conn:
+            double = conn.execute(text("SELECT id FROM area WHERE user_id = :user_id AND area = :area AND cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id)"), {"user_id": session["user_id"], "area": area, "cream": cream}) 
+            double = double.all()
+        if len(double) > 0:
+            with engine.begin() as conn:
                 conn.execute(
-                text("INSERT INTO area (area, cream_id, user_id, scheduall_id, starting_day) VALUES (:area, (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id), :user_id, :scheduall_id, :starting_day)"),
-                [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day}],
+                text("UPDATE area SET scheduall_id = :scheduall_id WHERE id = :id"),
+                {"scheduall_id": scheduall, "id" : double[0][0]},
                 )
                 conn.commit()
+            return return_areas()
+            
+            
+        # if everything is fine it can be added to the database
+        with engine.begin() as conn:
+            conn.execute(
+            text("INSERT INTO area (area, cream_id, user_id, scheduall_id, starting_day, checker) VALUES (:area, (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id), :user_id, :scheduall_id, :starting_day, 0)"),
+            [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day}],
+            )
+            conn.commit()
         
-        return render_template("areas.html", creams=creams, scheduall=schedualls)
+        return return_areas()
         
 
 
     else:
         # Putting in the cream names into the html
-        return render_template("areas.html", creams=creams, scheduall=schedualls)
+        return return_areas()
 
+
+@app.route("/", methods=["GET", "POST"])
+@login_required
+def index():
+    # Getting a List of all the creams of the user that are in use
+    def remind():
+        with engine.connect() as conn:
+            creams = conn.execute(text("SELECT cream FROM creams WHERE id IN (SELECT cream_id FROM area WHERE user_id = :user_id AND NOT scheduall_id = 0 AND checker = 0)"), {"user_id": session["user_id"]}) 
+        creams = creams.all()
+        creams = [item for tup in creams for item in tup]
+
+        # Making a dictionary with the creams and the corresponding areas
+        reminder = {}
+        for cream in creams:
+            with engine.connect() as conn:
+                areas = conn.execute(text("SELECT area FROM area WHERE cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id AND NOT scheduall_id = 0 AND checker = 0)"),
+                                    {"user_id": session["user_id"], "cream":cream})
+            areas = areas.all()
+            areas = [item for tup in areas for item in tup]
+            reminder[cream] = areas
+        return reminder
     
+
+    # Uncheckes areas that where cream need to be applied again
+    # Only the ones should be unchecked that were not already checked in the specific timeframe
+    def reset_checker(scheduall):
+        limit = datetime.now()
+        # for the schedual twice a day it should uncheck at 3 and 15 o'clock
+        if scheduall == 1:
+            if limit.hour < 3:
+                limit = limit.replace(minute=0, hour=15, day=limit.day-1)
+            elif limit.hour < 15:
+                limit = limit.replace(minute=0, hour=3)
+            else:
+                limit = limit.replace(minute=0, hour=15)
+        elif scheduall == 2:
+            if limit.hour < 3:
+                limit = limit.replace(minute=0, hour=3, day=limit.day-1)
+            else:
+                limit = limit.replace(minute=0, hour=3)
+        elif scheduall == 3:
+            with engine.connect() as conn:
+                checked = conn.execute(text("SELECT id, checktime, starting_day FROM area WHERE user_id = :user_id AND scheduall_id = :scheduall_id AND checker = 1"),
+                {"user_id": session["user_id"], "scheduall_id": scheduall})
+            checked = checked.all()
+            for c in checked:
+                startingday = c[2]
+                weekday = limit.isoweekday()
+                # Limit
+                if limit.hour < 3:
+                    if weekday > startingday:
+                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday))
+                    else:
+                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday-7))
+                else:
+                    if weekday >= startingday:
+                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday))
+                    else:
+                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday-7))
+                if datetime.strptime(c[1][0:19], '%Y-%m-%d %H:%M:%S') < limit:
+                    with engine.begin() as conn:
+                        conn.execute(
+                        text("UPDATE area SET checker = 0 WHERE id = :id"),
+                        [{"id": c[0]}],
+                        )
+                        conn.commit()
+            return
+        else:
+            return
+    
+
+        
+        with engine.connect() as conn:
+            checked = conn.execute(text("SELECT id, checktime FROM area WHERE user_id = :user_id AND scheduall_id = :scheduall_id AND checker = 1"),
+                {"user_id": session["user_id"], "scheduall_id": scheduall})
+        checked = checked.all()
+        for c in checked:
+            if datetime.strptime(c[1][0:19], '%Y-%m-%d %H:%M:%S') < limit:
+                with engine.begin() as conn:
+                    conn.execute(
+                    text("UPDATE area SET checker = 0 WHERE id = :id"),
+                    [{"id": c[0]}],
+                    )
+                    conn.commit() 
+    reset_checker(1)
+    reset_checker(2)
+    reset_checker(3)
+
+    reminder = remind()
+    if request.method == "POST":
+        #Looping through all the different areas and checking if they were submitted
+        for cream in reminder:
+            for area in reminder[cream]:
+                checker = request.form.get(cream+area)
+                if checker:
+                    with engine.begin() as conn:
+                        conn.execute(
+                        text("UPDATE area SET checker = 1, checktime = :checktime  WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream) AND area = :area"),
+                        [{"area": area, "cream": cream, "user_id": session["user_id"], "checktime": datetime.now()}],
+                        )
+                        conn.commit()
+        
+        # reminder must be updated, because it changes when something is submitted
+        return render_template("index.html", reminder=remind()) 
+    
+    else:
+        return render_template("index.html", reminder=reminder) 
 

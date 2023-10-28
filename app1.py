@@ -2,12 +2,19 @@ import os
 import re
 
 from sqlalchemy import create_engine, text 
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, flash, redirect, render_template, request, session
 from flask_session import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from helpers import apology, login_required
+
+# Setting global Variables
+# Reset time is the time where you can apply cream again
+RESET_TIME = 3
+# the time difference between the cream should be applied again for the different schedualls
+RESET_DIFF = [0, 5, 12, 84]
+
 
 # Configure application
 app = Flask(__name__)
@@ -233,8 +240,8 @@ def areas():
         # if everything is fine it can be added to the database
         with engine.begin() as conn:
             conn.execute(
-            text("INSERT INTO area (area, cream_id, user_id, scheduall_id, starting_day, checker) VALUES (:area, (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id), :user_id, :scheduall_id, :starting_day, 0)"),
-            [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day}],
+            text("INSERT INTO area (area, cream_id, user_id, scheduall_id, starting_day, checker, checktime) VALUES (:area, (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id), :user_id, :scheduall_id, :starting_day, 0, :checktime)"),
+            [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day, "checktime": datetime.now}],
             )
             conn.commit()
         
@@ -270,81 +277,175 @@ def index():
     
 
     # Uncheckes areas that where cream need to be applied again
-    # Only the ones should be unchecked that were not already checked in the specific timeframe
-    def reset_checker(scheduall):
-        limit = datetime.now()
-        # for the schedual twice a day it should uncheck at 3 and 15 o'clock
-        if scheduall == 1:
-            if limit.hour < 3:
-                limit = limit.replace(minute=0, hour=15, day=limit.day-1)
-            elif limit.hour < 15:
-                limit = limit.replace(minute=0, hour=3)
-            else:
-                limit = limit.replace(minute=0, hour=15)
-        elif scheduall == 2:
-            if limit.hour < 3:
-                limit = limit.replace(minute=0, hour=3, day=limit.day-1)
-            else:
-                limit = limit.replace(minute=0, hour=3)
-        elif scheduall == 3:
-            with engine.connect() as conn:
-                checked = conn.execute(text("SELECT id, checktime, starting_day FROM area WHERE user_id = :user_id AND scheduall_id = :scheduall_id AND checker = 1"),
-                {"user_id": session["user_id"], "scheduall_id": scheduall})
-            checked = checked.all()
-            for c in checked:
-                startingday = c[2]
-                weekday = limit.isoweekday()
-                # Limit
-                if limit.hour < 3:
-                    if weekday > startingday:
-                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday))
-                    else:
-                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday-7))
-                else:
-                    if weekday >= startingday:
-                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday))
-                    else:
-                        limit = limit.replace(minute=0, hour=3, day=limit.day+(startingday-weekday-7))
-                if datetime.strptime(c[1][0:19], '%Y-%m-%d %H:%M:%S') < limit:
-                    with engine.begin() as conn:
-                        conn.execute(
-                        text("UPDATE area SET checker = 0 WHERE id = :id"),
-                        [{"id": c[0]}],
-                        )
-                        conn.commit()
-            return
-        else:
-            return
-    
-
-        
+    def reset_checker():
+        """Uncheckes area where the checktime is before now"""
+        now = datetime.now()
+        # getting all the areas from the user and looping through them
         with engine.connect() as conn:
-            checked = conn.execute(text("SELECT id, checktime FROM area WHERE user_id = :user_id AND scheduall_id = :scheduall_id AND checker = 1"),
-                {"user_id": session["user_id"], "scheduall_id": scheduall})
-        checked = checked.all()
-        for c in checked:
-            if datetime.strptime(c[1][0:19], '%Y-%m-%d %H:%M:%S') < limit:
+            areas = conn.execute(text("SELECT id, checktime, scheduall_id FROM area WHERE user_id = :user_id AND checker = 1 AND NOT scheduall_id = 0"),
+            {"user_id": session["user_id"]})
+        areas = areas.all()
+        for area in areas:
+            # checking if area needs to be creamed again
+            checktime = datetime.strptime(area[1][0:19], '%Y-%m-%d %H:%M:%S')
+            scheduall = area[2]
+            if checktime < now:
                 with engine.begin() as conn:
                     conn.execute(
-                    text("UPDATE area SET checker = 0 WHERE id = :id"),
-                    [{"id": c[0]}],
+                        text("UPDATE area SET checker = 0 WHERE id = :id"),
+                        [{"id": area[0]}],
                     )
-                    conn.commit() 
-    reset_checker(1)
-    reset_checker(2)
-    reset_checker(3)
+                    conn.commit()
+                
+    def add_forgotten():
+        """uptdates history for times where it was forgotten to use creams"""
+        with engine.begin() as conn:
+            areas = conn.execute(
+                text("SELECT id, scheduall_id, checktime, starting_day FROM area WHERE user_id = :user_id AND NOT scheduall_id = 0 AND checker = 0"),
+                [{"user_id": session["user_id"]}]
+            )
+        areas = areas.all()
+        now = datetime.now()
+        for area in areas:
+            checktime = datetime.strptime(area[2][0:19], '%Y-%m-%d %H:%M:%S')
+            scheduall = area[1]
+            starting_day = area[3]
+            timeframes = [timedelta(hours=0), timedelta(hours=12), timedelta(hours=24), timedelta(days=7)]
+            # checking how often cream was not applied
+            ## setting checktime at the start/end of a cream timeframe
+            if scheduall == 1:
+                if checktime.hour < RESET_TIME:
+                    checktime = checktime.replace(minute=0, hour=RESET_TIME + 12)
+                    checktime = checktime - timedelta(days=1)
+                elif checktime.hour < RESET_TIME + 12:
+                    checktime = checktime.replace(minute=0, hour=RESET_TIME)
+                else:
+                    checktime = checktime.replace(minute=0, hour=RESET_TIME + 12)
+            elif scheduall == 2:
+                if checktime.hour < RESET_TIME:
+                    checktime = checktime.replace(minute=0, hour=RESET_TIME)
+                    checktime = checktime - timedelta(days=1)
+                else:
+                    checktime = checktime.replace(minute=0, hour=RESET_TIME)
+            elif scheduall == 3:
+                weekday = now.isoweekday()
+                if checktime.hour < RESET_TIME:
+                    if weekday > starting_day:
+                        checktime = checktime.replace(second=0, minute=0, hour=RESET_TIME)
+                        checktime = checktime - timedelta(days=(weekday-starting_day))
+                    else:
+                        checktime = checktime.replace(second=0, minute=0, hour=RESET_TIME)
+                        checktime = checktime - timedelta(days=7-(starting_day-weekday))
+                else:
+                    if weekday >= starting_day:
+                        checktime = checktime.replace(second=0, minute=0, hour=RESET_TIME)
+                        checktime = checktime - timedelta(days=(weekday-starting_day))
+                    else:
+                        checktime = now.replace(second=0, minute=0, hour=RESET_TIME)
+                        checktime = checktime - timedelta(days=7-(starting_day-weekday))
+            # checking and adding enties until it is now
+            while checktime < now - timeframes[scheduall]:
+                with engine.begin() as conn:
+                    checktime = checktime + timeframes[scheduall]
+                    conn.execute(
+                        text("UPDATE area SET checktime = :checktime  WHERE id = :id"),
+                        [{"id": area[0], "checktime":checktime}],
+                    )
+                    conn.execute(
+                        text("INSERT INTO history (area_id, cream_time, applied) VALUES (:area_id, :cream_time, 0)"),
+                        [{"area_id": area[0], "cream_time": checktime}]
+                    )
+                    conn.commit()
+                    
 
+                
+                    
+    def next_time(area_id):
+        now = datetime.now()
+        with engine.begin() as conn:
+            scheduall = conn.execute(
+            text("SELECT scheduall_id FROM area WHERE id = :id"),
+            [{"id": area_id}],
+            )
+        scheduall = scheduall.all()[0][0]
+        # For twice a day scheduall
+        if scheduall == 1:
+            if now.hour < RESET_TIME:
+                new_time = now.replace(minute=0, hour=RESET_TIME)
+            elif now.hour < RESET_TIME + 12:
+                new_time = now.replace(minute=0, hour=RESET_TIME + 12)
+            else:
+                new_time = now.replace(minute=0, hour=RESET_TIME)
+                new_time = new_time + timedelta(days=1)
+            if new_time < (now + timedelta(hours=RESET_DIFF[scheduall])):
+                new_time = now + timedelta(hours=RESET_DIFF[scheduall])
+            
+
+        # For daily scheduall
+        elif scheduall == 2:
+            if now.hour < RESET_TIME:
+                new_time = now.replace(minute=0, hour=RESET_TIME)
+            else:
+                new_time = now.replace(minute=0, hour=RESET_TIME)
+                new_time = new_time + timedelta(days=1)
+            if new_time < (now + timedelta(hours=RESET_DIFF[scheduall])):
+                new_time = now + timedelta(hours=RESET_DIFF[scheduall])
+        
+        # For weekly scheduall
+        elif scheduall == 3:
+            with engine.begin() as conn:
+                starting_day = conn.execute(
+                text("SELECT starting_day FROM area WHERE id = :id"),
+                [{"id": area_id}],
+                )
+            starting_day = starting_day.all()[0][0]
+            weekday = now.isoweekday()
+            if now.hour < RESET_TIME:
+                if weekday > starting_day:
+                    new_time = now.replace(second=0, minute=0, hour=RESET_TIME)
+                    new_time = new_time + timedelta(days=(7 - (weekday-starting_day)))
+                else:
+                    new_time = now.replace(second=0, minute=0, hour=RESET_TIME)
+                    new_time = new_time + timedelta(days=(starting_day-weekday))
+            else:
+                if weekday >= starting_day:
+                    new_time = now.replace(second=0, minute=0, hour=RESET_TIME)
+                    new_time = new_time + timedelta(days=(7 - (weekday-starting_day)))
+                else:
+                    new_time = now.replace(second=0, minute=0, hour=RESET_TIME)
+                    new_time = new_time + timedelta(days=(starting_day-weekday))
+            if new_time < (now + timedelta(hours=RESET_DIFF[scheduall])):
+                new_time = now + timedelta(hours=RESET_DIFF[scheduall]) 
+        else:
+            new_time = None
+
+        return new_time
+
+    reset_checker()
     reminder = remind()
+    add_forgotten()
     if request.method == "POST":
         #Looping through all the different areas and checking if they were submitted
         for cream in reminder:
             for area in reminder[cream]:
                 checker = request.form.get(cream+area)
+                # if it was checked, checker is not Null
                 if checker:
+                    # calculating the next time were the cream can be applied
+                    with engine.begin() as conn:
+                        area_id = conn.execute(
+                            text("SELECT id FROM area WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream) AND area = :area"),
+                            [{"area": area, "cream": cream, "user_id": session["user_id"], "checktime": datetime.now()}],
+                        )
+                    area_id = area_id.all()[0][0]
                     with engine.begin() as conn:
                         conn.execute(
-                        text("UPDATE area SET checker = 1, checktime = :checktime  WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream) AND area = :area"),
-                        [{"area": area, "cream": cream, "user_id": session["user_id"], "checktime": datetime.now()}],
+                            text("UPDATE area SET checker = 1, checktime = :checktime  WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream) AND area = :area"),
+                            [{"area": area, "cream": cream, "user_id": session["user_id"], "checktime": next_time(area_id)}],
+                        )
+                        conn.execute(
+                            text("INSERT INTO history (area_id, cream_time, applied) VALUES (:area_id, :cream_time, 1)"),
+                            [{"area_id": area_id, "cream_time": datetime.now()}]
                         )
                         conn.commit()
         

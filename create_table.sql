@@ -34,3 +34,10 @@ VALUES
 (1, 'twice a day'),
 (2, 'daily'),
 (3, 'once a week');
+
+CREATE table history(
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    area_id INTEGER NOT NULL,
+    cream_time TEXT NOT NULL,
+    applied INTEGER NOT NULL
+);

@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    History
+{% endblock %}
+
+{% block main %}
+    <h1>history</h1>
+    <form action="/history" method="post">
+        Select Filter
+        <div class="filter">
+            <select name="area", id="area" class="form-control mx-auto w-auto">
+                <option disabled selected>Skin Area</option>
+            {% for area in areas %}
+                <option value="{{ area }}">{{ area }}</option>
+            {% endfor %}
+            </select>
+        </div>
+        <div class="filter">
+            <select name="cream", id="cream" class="form-control mx-auto w-auto">
+                <option disabled selected>Cream</option>
+            {% for cream in creams %}
+                <option value="{{ cream }}">{{ cream }}</option>
+            {% endfor %}
+            </select>
+        </div>
+        
+        <div class="filter"><button class="btn btn-primary" type="submit">Submit</button></div>
+
+    </form>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th scope="col">area</th>
+                <th scope="col">cream</th>
+                <th scope="col">date</th>
+                <th scope="col">time</th>
+                <th scope="col">creamed?</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for his in history %}
+                <tr>
+                    <td>{{ his[0] }}</td>
+                    <td>{{ his[1] }}</td>
+                    <td>{{ his[2][:10] }}</td>
+                    <td>{{ his[2][11:19] }}</td>
+                    {% if his[3] == 0 %}
+                    <td style="background-color: crimson;">no</td>
+                    {% else %}
+                    <td style="background-color: green;">yes</td>
+                    {% endif %}
+
+                </tr>
+            {% endfor %}
+{% endblock %}

@@ -52,6 +52,7 @@
                 <th scope="col">cream</th>
                 <th scope="col">scheduall</th>
                 <th scope="col">day</th>
+                <th scope="col">DELETE</th>
             </tr>
         </thead>
         <tbody>
@@ -62,6 +63,11 @@
                     <td>{{ area[1] }}</td>
                     <td>{{ area[2] }}</td>
                     <td>{{ weekdays[area[3]] }}</td>
+                    <td>
+                        <form action="/areas" method="post">
+                            <button class="btn btn-primary" name="delete" type="submit" style="width:40px" value= "{{ area }}">x</button>
+                        </form>
+                    </td>
                 </tr>
             {% endfor %}
         </tbody>

@@ -1,5 +1,6 @@
 import os
 import re
+import ast
 
 from sqlalchemy import create_engine, text 
 from datetime import datetime, timedelta
@@ -137,7 +138,7 @@ def register():
 @login_required
 def creams():
     """Add creams"""
-    if request.method == "POST":
+    if request.method == "POST" and not request.form.get("delete"):
         # getting the information
         cream = request.form.get("name")
         # checking if a name was added
@@ -165,7 +166,38 @@ def creams():
                 rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
             rows = rows.all()
             return render_template("creams.html", creams=rows)
+    
+    # path for deleting creams
+    elif request.method == "POST":
+        # deletes history and area and cream for everything for that specific cream
+        cream = request.form.get("delete")
+        with engine.connect() as conn:
+            creams = conn.execute(text("SELECT cream FROM creams WHERE user_id = :user_id"), 
+                                  {"user_id":session["user_id"]})
+        creams = creams.all()
+        creams_list = [item for tup in creams for item in tup]
+
+        if cream not in creams_list:
+            return apology("Please don't change the HTML")
         
+        with engine.connect() as conn:
+            cream_id = conn.execute(text("SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id"),
+                         {"cream":cream, "user_id":session["user_id"]})
+            cream_id = cream_id.all()[0][0]
+            conn.execute(text("DELETE FROM history WHERE area_id IN (SELECT id FROM area WHERE cream_id = :cream_id)"),
+                         {"cream_id":cream_id})
+            conn.execute(text("DELETE FROM area WHERE cream_id = :cream_id"),
+                         {"cream_id":cream_id})
+            conn.execute(text("DELETE FROM creams WHERE id = :cream_id"),
+                         {"cream_id":cream_id})
+            conn.commit()
+        
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
+        rows = rows.all()
+        return render_template("creams.html", creams=rows)
+
     else:
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT cream, official_name, brand FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
@@ -182,6 +214,7 @@ def areas():
         rows = conn.execute(text("SELECT cream FROM creams WHERE user_id = :user_id "), {"user_id": session["user_id"]})
         scheduall = conn.execute(text("SELECT * FROM scheduall"))
     creams = rows.all()
+    creams_list = [item for tup in creams for item in tup]
     schedualls = scheduall.all()
     def return_areas():
         """Getting Information of the areas out of the database"""
@@ -191,7 +224,7 @@ def areas():
         return render_template("areas.html", areas=area_info, creams=creams, scheduall=schedualls)
 
 
-    if request.method == "POST":
+    if request.method == "POST" and not request.form.get("delete"):
         # Ensure user typed in an area 
         area = request.form.get("area")
         if len(area) <= 0:
@@ -199,7 +232,6 @@ def areas():
         
         # Ensure user has not changed HTML for creams
         cream = request.form.get("cream")
-        creams_list = [item for tup in creams for item in tup]
         if not cream in creams_list:
             return apology("Cream need to be part of your creams")
         
@@ -241,14 +273,39 @@ def areas():
         with engine.begin() as conn:
             conn.execute(
             text("INSERT INTO area (area, cream_id, user_id, scheduall_id, starting_day, checker, checktime) VALUES (:area, (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id), :user_id, :scheduall_id, :starting_day, 0, :checktime)"),
-            [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day, "checktime": datetime.now}],
+            [{"area": area, "cream": cream, "user_id": session["user_id"], "scheduall_id": scheduall, "starting_day": day, "checktime": datetime.now()}],
             )
             conn.commit()
         
         return return_areas()
+    
+    # for deletion
+    if request.method == "POST" and request.form.get("delete"):
+        area = request.form.get("delete")
+        # turning input string back to a tuple
+        try:
+            area = ast.literal_eval(area)
+        except:
+            return apology("Please don't change the html")
+        # Ensure html was not changed and area and cream are both in the lists
+        with engine.connect() as conn:
+            areas = conn.execute(text("SELECT area FROM area WHERE user_id = :user_id "), {"user_id": session["user_id"]})
+        areas = areas.all()
+        areas_list = [item for tup in areas for item in tup]
+        if area[0] not in areas_list or area[1] not in creams_list:
+            return apology("Please don't change the html")
         
-
-
+        # Deleting area and history entries
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM history WHERE area_id = (SELECT id FROM area WHERE area = :area AND cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id))"),
+                [{"area": area[0], "cream": area[1], "user_id": session["user_id"]}],
+            )
+            conn.execute(text("DELETE FROM area WHERE area = :area AND cream_id = (SELECT id FROM creams WHERE cream = :cream and user_id = :user_id)"),
+                [{"area": area[0], "cream": area[1], "user_id": session["user_id"]}],
+            )
+            conn.commit()
+        return return_areas()
     else:
         # Putting in the cream names into the html
         return return_areas()
@@ -361,6 +418,7 @@ def index():
                 
                     
     def next_time(area_id):
+        """Calculates the next time where cream can be applied"""
         now = datetime.now()
         with engine.begin() as conn:
             scheduall = conn.execute(
@@ -454,4 +512,52 @@ def index():
     
     else:
         return render_template("index.html", reminder=reminder) 
+
+
+@app.route("/history", methods=["GET", "POST"])
+@login_required
+def history():
+    """shows history"""
+    with engine.begin() as conn:
+        history = conn.execute(
+        text("""SELECT area, cream, cream_time, applied FROM history 
+                JOIN area ON history.area_id=area.id
+                JOIN creams ON area.cream_id=creams.id
+                WHERE area.user_id = :user_id"""),
+            [{"user_id": session["user_id"]}],
+        )
+    
+    history = history.all()[::-1]
+    # getting lists of all the unique areas and creams for filter
+    areas = []
+    creams = []
+    for element in history:
+        if element[0] not in areas:
+            areas.append(element[0])
+        if element[1] not in creams:
+            creams.append(element[1])
+
+    if request.method == "POST":
+        cream = request.form.get("cream")
+        area = request.form.get("area")
+        history2 = []
+        # the different cases if one or more filter are left blank
+        if not area and not cream:
+            history2 = history
+        elif not area:
+            for his in history:
+                if his[1] == cream:
+                    history2.append(his)
+        elif not cream:
+            for his in history:
+                if his[0] == area:
+                    history2.append(his)
+        else:
+            for his in history:
+                if his[0] == area and his[1] == cream:
+                    history2.append(his)
+        history = history2
+        return render_template("history.html", history=history, areas=areas, creams=creams)
+    else:
+        return render_template("history.html", history=history, areas=areas, creams=creams)
 

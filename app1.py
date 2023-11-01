@@ -317,7 +317,7 @@ def index():
     # Getting a List of all the creams of the user that are in use
     def remind():
         with engine.connect() as conn:
-            creams = conn.execute(text("SELECT cream FROM creams WHERE id IN (SELECT cream_id FROM area WHERE user_id = :user_id AND NOT scheduall_id = 0 AND checker = 0)"), {"user_id": session["user_id"]}) 
+            creams = conn.execute(text("SELECT cream FROM creams WHERE user_id = :user_id AND id IN (SELECT cream_id FROM area WHERE user_id = :user_id AND NOT scheduall_id = 0 AND checker = 0)"), {"user_id": session["user_id"]}) 
         creams = creams.all()
         creams = [item for tup in creams for item in tup]
 
@@ -492,13 +492,14 @@ def index():
                     # calculating the next time were the cream can be applied
                     with engine.begin() as conn:
                         area_id = conn.execute(
-                            text("SELECT id FROM area WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream) AND area = :area"),
-                            [{"area": area, "cream": cream, "user_id": session["user_id"], "checktime": datetime.now()}],
+                            text("SELECT id FROM area WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id) AND area = :area"),
+                            [{"area": area, "cream": cream, "user_id": session["user_id"]}],
                         )
                     area_id = area_id.all()[0][0]
+                    print(area, cream, session["user_id"])
                     with engine.begin() as conn:
                         conn.execute(
-                            text("UPDATE area SET checker = 1, checktime = :checktime  WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream) AND area = :area"),
+                            text("UPDATE area SET checker = 1, checktime = :checktime  WHERE user_id = :user_id AND cream_id = (SELECT id FROM creams WHERE cream = :cream AND user_id = :user_id) AND area = :area"),
                             [{"area": area, "cream": cream, "user_id": session["user_id"], "checktime": next_time(area_id)}],
                         )
                         conn.execute(

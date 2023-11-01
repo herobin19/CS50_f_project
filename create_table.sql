@@ -6,7 +6,7 @@ CREATE TABLE users (
 
 CREATE TABLE creams (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-    cream TEXT NOT NULL UNIQUE,
+    cream TEXT NOT NULL,
     official_name TEXT,
     brand TEXT,
     user_id INTEGER NOT NULL
